@@ -18,7 +18,6 @@ pub const MEDIA_BASE_URL_ENV: &str = "MEDIA_BASE_URL";
 pub const PODCAST_TITLE_ENV: &str = "PODCAST_TITLE";
 pub const PODCAST_LINK_ENV: &str = "PODCAST_LINK";
 pub const PODCAST_DESCRIPTION_ENV: &str = "PODCAST_DESCRIPTION";
-pub const RSS_SELF_URL_ENV: &str = "RSS_SELF_URL";
 pub const FILES_ROOT: &str = "/files";
 
 #[derive(Debug, PartialEq, Eq)]
@@ -34,7 +33,6 @@ pub struct CliOverrides {
     pub podcast_title: Option<String>,
     pub podcast_link: Option<String>,
     pub podcast_description: Option<String>,
-    pub rss_self_url: Option<String>,
     pub print_config: bool,
 }
 
@@ -44,7 +42,6 @@ pub struct AppConfig {
     pub podcast_title: String,
     pub podcast_link: String,
     pub podcast_description: String,
-    pub rss_self_url: String,
 }
 
 impl AppConfig {
@@ -54,13 +51,11 @@ impl AppConfig {
              - {MEDIA_BASE_URL_ENV}={}\n\
              - {PODCAST_TITLE_ENV}={}\n\
              - {PODCAST_LINK_ENV}={}\n\
-             - {PODCAST_DESCRIPTION_ENV}={}\n\
-             - {RSS_SELF_URL_ENV}={}",
+             - {PODCAST_DESCRIPTION_ENV}={}",
             self.media_base_url,
             self.podcast_title,
             self.podcast_link,
             self.podcast_description,
-            self.rss_self_url
         )
     }
 }
@@ -119,7 +114,6 @@ pub fn load_config_from_sources(
             PODCAST_DESCRIPTION_ENV,
             &get_env,
         )?,
-        rss_self_url: get_required_value(&cli.rss_self_url, RSS_SELF_URL_ENV, &get_env)?,
     })
 }
 
@@ -181,13 +175,35 @@ fn list_audio_files_for_dir(dir: &str) -> std::io::Result<Vec<String>> {
     Ok(files)
 }
 
-fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String]) -> String {
+fn self_url_from_request(request: &IncomingRequest) -> String {
+    let path = request
+        .path_with_query()
+        .unwrap_or_else(|| "/".to_string());
+
+    let host = request
+        .headers()
+        .get(&"host".to_string())
+        .into_iter()
+        .next()
+        .and_then(|v| String::from_utf8(v).ok())
+        .unwrap_or_default();
+
+    if host.is_empty() {
+        path
+    } else {
+        format!("https://{host}{path}")
+    }
+}
+
+fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String], self_url: &str) -> String {
     let start_date = start_release_datetime_for_directory(dir);
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    out.push_str("<rss version=\"2.0\">\n<channel>\n");
+    out.push_str("<rss version=\"2.0\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n<channel>\n");
     out.push_str(&format!(
-        "<title>{}</title>\n<link>{}</link>\n<description>{}</description>\n",
-        xml_escape(&config.podcast_title),
+        "<atom:link href=\"{}\" rel=\"self\" type=\"application/rss+xml\"/>\n\
+         <title>{}</title>\n<link>{}</link>\n<description>{}</description>\n",
+        xml_escape(self_url),
+        xml_escape(&format!("{} - {}", config.podcast_title, dir)),
         xml_escape(&config.podcast_link),
         xml_escape(&config.podcast_description)
     ));
@@ -238,7 +254,7 @@ fn html_index_page(dirs: &[String]) -> String {
     );
     for dir in dirs {
         out.push_str(&format!(
-            "<li><a href=\"/files/{0}\">/files/{0}</a></li>",
+            "<li><a href=\"/{0}\">/{0}</a></li>",
             xml_escape(dir)
         ));
     }
@@ -322,13 +338,23 @@ impl Guest for Component {
             }
         };
 
-        let path = request
-            .path_with_query()
-            .unwrap_or_else(|| "/".to_string())
+        let self_url = self_url_from_request(&request);
+        let path = self_url
             .split('?')
             .next()
-            .unwrap_or("/")
-            .to_string();
+            .map(|p| {
+                // strip the host portion if present, keeping only the path
+                if let Some(after_scheme) = p.strip_prefix("https://").or_else(|| p.strip_prefix("http://")) {
+                    after_scheme
+                        .find('/')
+                        .map(|i| &after_scheme[i..])
+                        .unwrap_or("/")
+                        .to_string()
+                } else {
+                    p.to_string()
+                }
+            })
+            .unwrap_or_else(|| "/".to_string());
 
         if path == "/" {
             match list_subdirectories() {
@@ -341,12 +367,12 @@ impl Guest for Component {
                 Err(err) => send_response(
                     500,
                     "text/plain; charset=utf-8",
-                    format!("Failed to read /files: {err}").as_bytes(),
+                    format!("Failed to read files root: {err}").as_bytes(),
                     response_out,
                 ),
             }
-        } else if let Some(dir) = path.strip_prefix("/files/") {
-            if dir.is_empty() || dir.contains('/') {
+        } else if let Some(dir) = path.strip_prefix('/').map(|s| s.trim_end_matches('/')).filter(|s| !s.is_empty()) {
+            if dir.contains('/') {
                 send_response(
                     400,
                     "text/plain; charset=utf-8",
@@ -357,7 +383,7 @@ impl Guest for Component {
                 match list_audio_files_for_dir(dir) {
                     Ok(files) => {
                         let sorted = sort_files_lexical(&files);
-                        let rss = build_feed_xml(&config, dir, &sorted);
+                        let rss = build_feed_xml(&config, dir, &sorted, &self_url);
                         send_response(
                             200,
                             "application/rss+xml; charset=utf-8",
@@ -452,7 +478,6 @@ mod tests {
             PODCAST_TITLE_ENV => Some(String::from("My Audio Book")),
             PODCAST_LINK_ENV => Some(String::from("https://example.com")),
             PODCAST_DESCRIPTION_ENV => Some(String::from("An audio feed")),
-            RSS_SELF_URL_ENV => Some(String::from("https://feed.example.com/files/A")),
             _ => None,
         })
         .expect("config should load from env");
@@ -468,7 +493,6 @@ mod tests {
             podcast_title: Some(String::from("Override Title")),
             podcast_link: Some(String::from("https://override-site.example.com")),
             podcast_description: Some(String::from("Override description")),
-            rss_self_url: Some(String::from("https://override-feed.example.com/files/A")),
             print_config: false,
         };
         let cfg = load_config_from_sources(&cli, |_| Some(String::from("ignored")))
