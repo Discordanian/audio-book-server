@@ -65,6 +65,8 @@ wasmtime serve --addr 127.0.0.1:3000 --dir ./files::/files \
 
 Returns an RSS file in the style of a podcast with every audio file in `/files/A/` sorted such that the first file in the list is the 'oldest' date in the RSS feed.  This allows podcast players to get all the audio files in order to play.
 
+Each RSS item includes `pubDate`. The start date is deterministically derived from the directory name and forced into the past; each subsequent lexically sorted file gets `+1 minute`.
+
 If your audio files are served by Apache or Nginx, build enclosure URLs using a media base URL prefix:
 
 `{MEDIA_BASE_URL}/{dir}/{file}`

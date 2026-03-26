@@ -7,5 +7,6 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 percent-encoding = "2"
 wasi = "0.14"

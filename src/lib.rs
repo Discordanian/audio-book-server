@@ -1,6 +1,7 @@
 use std::fs;
 use std::path::PathBuf;
 
+use chrono::{DateTime, Duration, Utc};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use wasi::exports::http::incoming_handler::Guest;
 use wasi::http::types::{
@@ -181,6 +182,7 @@ fn list_audio_files_for_dir(dir: &str) -> std::io::Result<Vec<String>> {
 }
 
 fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String]) -> String {
+    let start_date = start_release_datetime_for_directory(dir);
     let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
     out.push_str("<rss version=\"2.0\">\n<channel>\n");
     out.push_str(&format!(
@@ -190,11 +192,13 @@ fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String]) -> String {
         xml_escape(&config.podcast_description)
     ));
 
-    for file in files {
+    for (index, file) in files.iter().enumerate() {
         if let Ok(url) = build_media_url(&config.media_base_url, dir, file) {
+            let pub_date = release_datetime_for_index(start_date, index);
             out.push_str("<item>\n");
             out.push_str(&format!("<title>{}</title>\n", xml_escape(file)));
             out.push_str(&format!("<guid>{}</guid>\n", xml_escape(&url)));
+            out.push_str(&format!("<pubDate>{}</pubDate>\n", pub_date));
             out.push_str(&format!(
                 "<enclosure url=\"{}\" type=\"audio/mpeg\" />\n",
                 xml_escape(&url)
@@ -205,6 +209,27 @@ fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String]) -> String {
 
     out.push_str("</channel>\n</rss>\n");
     out
+}
+
+fn release_datetime_for_index(start: DateTime<Utc>, index: usize) -> String {
+    (start + Duration::minutes(index as i64)).to_rfc2822()
+}
+
+fn start_release_datetime_for_directory(dir: &str) -> DateTime<Utc> {
+    // Keep all generated episode dates safely in the past, while making the
+    // start date deterministic per directory.
+    let days_back = 365_i64 + (stable_directory_hash(dir) % 3650) as i64;
+    Utc::now() - Duration::days(days_back)
+}
+
+fn stable_directory_hash(value: &str) -> u64 {
+    // FNV-1a 64-bit for stable deterministic hashing.
+    let mut hash = 0xcbf29ce484222325_u64;
+    for b in value.as_bytes() {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 fn html_index_page(dirs: &[String]) -> String {
@@ -461,5 +486,34 @@ mod tests {
         };
         let err = load_config_from_sources(&cli, |_| None).expect_err("empty must fail");
         assert_eq!(err, ConfigError::MissingOrEmpty(MEDIA_BASE_URL_ENV));
+    }
+
+    #[test]
+    fn release_datetimes_increase_by_one_minute() {
+        let start = DateTime::parse_from_rfc2822("Wed, 01 Jan 2020 00:00:00 +0000")
+            .expect("valid date")
+            .with_timezone(&Utc);
+        let first = release_datetime_for_index(start, 0);
+        let second = release_datetime_for_index(start, 1);
+        let first_dt = DateTime::parse_from_rfc2822(&first)
+            .expect("valid first pubDate")
+            .with_timezone(&Utc);
+        let second_dt = DateTime::parse_from_rfc2822(&second)
+            .expect("valid second pubDate")
+            .with_timezone(&Utc);
+        assert_eq!(first_dt, start);
+        assert_eq!(second_dt - first_dt, Duration::minutes(1));
+    }
+
+    #[test]
+    fn directory_start_date_is_deterministic_and_in_past() {
+        let now = Utc::now();
+        let d1 = start_release_datetime_for_directory("A");
+        let d2 = start_release_datetime_for_directory("A");
+        assert!(d1 <= now);
+        assert!(d2 <= now);
+
+        let delta = d2 - d1;
+        assert!(delta.num_seconds().abs() < 2);
     }
 }
