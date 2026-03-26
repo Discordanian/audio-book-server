@@ -72,6 +72,19 @@ wasmtime serve --addr 127.0.0.1:3000 --dir ./files::/files \
 
 Returns an RSS file in the style of a podcast with every audio file in `/files/A/` sorted such that the first file in the list is the 'oldest' date in the RSS feed.  This allows podcast players to get all the audio files in order to play.
 
+If your audio files are served by Apache or Nginx, build enclosure URLs using a media base URL prefix:
+
+`{MEDIA_BASE_URL}/{dir}/{file}`
+
+Example:
+
+- `MEDIA_BASE_URL=https://media.example.com`
+- `dir=A`
+- `file=chapter-01.mp3`
+- enclosure URL: `https://media.example.com/A/chapter-01.mp3`
+
+The crate now includes `build_media_url(base_url, directory, file_name)` in `src/lib.rs` to normalize slashes and URL-encode path segments for this format.
+
 ```bash
 curl http://localhost:8080/files/A
 ```
