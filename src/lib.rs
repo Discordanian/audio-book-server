@@ -177,7 +177,7 @@ fn self_url_from_request(request: &IncomingRequest) -> String {
 
     let host = request
         .headers()
-        .get(&"host".to_string())
+        .get("host")
         .into_iter()
         .next()
         .and_then(|v| String::from_utf8(v).ok())
@@ -227,14 +227,14 @@ fn release_datetime_for_index(start: DateTime<Utc>, index: usize) -> String {
 }
 
 fn start_release_datetime_for_directory(dir: &str) -> DateTime<Utc> {
-    // Keep all generated episode dates safely in the past, while making the
-    // start date deterministic per directory.
+    // Keep all generated episode dates safely in the past
     let days_back = 365_i64 + (stable_directory_hash(dir) % 3650) as i64;
     Utc::now() - Duration::days(days_back)
 }
 
 fn stable_directory_hash(value: &str) -> u64 {
     // FNV-1a 64-bit for stable deterministic hashing.
+    // Algo taken right off of wikipedia.
     let mut hash = 0xcbf29ce484222325_u64;
     for b in value.as_bytes() {
         hash ^= u64::from(*b);
@@ -259,9 +259,7 @@ fn html_index_page(dirs: &[String]) -> String {
 
 fn send_response(status: u16, content_type: &str, body: &[u8], response_out: ResponseOutparam) {
     let headers = Fields::new();
-    headers
-        .append(&"content-type".to_string(), content_type.as_bytes())
-        .ok();
+    headers.append("content-type", content_type.as_bytes()).ok();
     let response = OutgoingResponse::new(headers);
     response.set_status_code(status).ok();
     let response_body = response.body().expect("response body handle");
