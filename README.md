@@ -85,6 +85,35 @@ Example:
 
 The crate now includes `build_media_url(base_url, directory, file_name)` in `src/lib.rs` to normalize slashes and URL-encode path segments for this format.
 
+## Configuration
+
+The binary reads required configuration values from environment variables, with optional CLI overrides:
+
+- `MEDIA_BASE_URL`
+- `PODCAST_TITLE`
+- `PODCAST_LINK`
+- `PODCAST_DESCRIPTION`
+- `RSS_SELF_URL`
+
+CLI overrides:
+
+```bash
+cargo run --target aarch64-apple-darwin -- \
+  --media-base-url https://media.example.com \
+  --podcast-title "My Audio Book" \
+  --podcast-link https://example.com \
+  --podcast-description "Episode feed" \
+  --rss-self-url https://feed.example.com/files/A
+```
+
+To print effective config values and exit:
+
+```bash
+cargo run --target aarch64-apple-darwin -- --print-config
+```
+
+If any required option is missing or empty, the process exits with an error message.
+
 ```bash
 curl http://localhost:8080/files/A
 ```
