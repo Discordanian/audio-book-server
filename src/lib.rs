@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use chrono::{DateTime, Duration, Utc};
-use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 use wasi::exports::http::incoming_handler::Guest;
 use wasi::http::types::{
     Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
@@ -52,10 +52,7 @@ impl AppConfig {
              - {PODCAST_TITLE_ENV}={}\n\
              - {PODCAST_LINK_ENV}={}\n\
              - {PODCAST_DESCRIPTION_ENV}={}",
-            self.media_base_url,
-            self.podcast_title,
-            self.podcast_link,
-            self.podcast_description,
+            self.media_base_url, self.podcast_title, self.podcast_link, self.podcast_description,
         )
     }
 }
@@ -176,9 +173,7 @@ fn list_audio_files_for_dir(dir: &str) -> std::io::Result<Vec<String>> {
 }
 
 fn self_url_from_request(request: &IncomingRequest) -> String {
-    let path = request
-        .path_with_query()
-        .unwrap_or_else(|| "/".to_string());
+    let path = request.path_with_query().unwrap_or_else(|| "/".to_string());
 
     let host = request
         .headers()
@@ -286,7 +281,11 @@ fn encode_path_segment(value: &str) -> String {
 /// Examples:
 /// - https://media.example.com/A/chapter-01.mp3
 /// - https://media.example.com/A/chapter%2001.mp3
-pub fn build_media_url(base_url: &str, directory: &str, file_name: &str) -> Result<String, UrlBuildError> {
+pub fn build_media_url(
+    base_url: &str,
+    directory: &str,
+    file_name: &str,
+) -> Result<String, UrlBuildError> {
     let trimmed_base = base_url.trim().trim_end_matches('/');
     if trimmed_base.is_empty() {
         return Err(UrlBuildError::EmptyBaseUrl);
@@ -344,7 +343,10 @@ impl Guest for Component {
             .next()
             .map(|p| {
                 // strip the host portion if present, keeping only the path
-                if let Some(after_scheme) = p.strip_prefix("https://").or_else(|| p.strip_prefix("http://")) {
+                if let Some(after_scheme) = p
+                    .strip_prefix("https://")
+                    .or_else(|| p.strip_prefix("http://"))
+                {
                     after_scheme
                         .find('/')
                         .map(|i| &after_scheme[i..])
@@ -371,7 +373,11 @@ impl Guest for Component {
                     response_out,
                 ),
             }
-        } else if let Some(dir) = path.strip_prefix('/').map(|s| s.trim_end_matches('/')).filter(|s| !s.is_empty()) {
+        } else if let Some(dir) = path
+            .strip_prefix('/')
+            .map(|s| s.trim_end_matches('/'))
+            .filter(|s| !s.is_empty())
+        {
             if dir.contains('/') {
                 send_response(
                     400,
