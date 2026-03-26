@@ -38,6 +38,7 @@ Output: `target/wasm32-wasip2/release/audio_book_server.wasm`
 ```bash
 wasmtime serve \
   -S cli \
+  --addr 0.0.0.0:3000 \
   --env MEDIA_BASE_URL=https://media.example.com \
   --env PODCAST_TITLE="My Audio Book" \
   --env PODCAST_LINK=https://example.com \
@@ -61,7 +62,7 @@ wasmtime serve --addr 127.0.0.1:3000 --dir ./files::/files \
 
 ## API
 
-### `GET /files/A`
+### `GET /A`
 
 Returns an RSS file in the style of a podcast with every audio file in `/files/A/` sorted such that the first file in the list is the 'oldest' date in the RSS feed.  This allows podcast players to get all the audio files in order to play.
 
@@ -93,7 +94,7 @@ Required environment variables:
 If any required value is missing or empty, the server returns HTTP 500 with a configuration error.
 
 ```bash
-curl http://localhost:8080/files/A
+curl http://localhost:8080/A
 ```
 
 ### `GET /`
