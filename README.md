@@ -10,7 +10,6 @@ Because the output is a `.wasm` file, it is architecture-independent. Build once
 | Tool | Version | Purpose |
 |---|---|---|
 | Rust (nightly) | ≥ 1.82 | Compiler with `wasm32-wasip2` target |
-| [wkg](https://github.com/bytecodealliance/wasm-pkg-tools) | 0.15+ | Fetches WASI WIT interface definitions |
 | [wasm-tools](https://github.com/bytecodealliance/wasm-tools) | 1.200+ | Inspect/validate `.wasm` components |
 | [wasmtime](https://wasmtime.dev/) | 14+ | Run the component |
 
@@ -18,12 +17,6 @@ Because the output is a `.wasm` file, it is architecture-independent. Build once
 
 ```bash
 rustup target add wasm32-wasip2
-```
-
-### Install wkg
-
-```bash
-cargo install wkg
 ```
 
 ### Install wasmtime
@@ -35,25 +28,22 @@ curl https://wasmtime.dev/install.sh -sSf | bash
 ## Build
 
 ```bash
-# 1. Fetch WASI WIT interface definitions (only needed once, or after wkg.lock changes)
-wkg wit fetch --type wit
-
-# 2. Compile
 cargo build --release
 ```
 
-Output: `target/wasm32-wasip2/release/audio-book-server.wasm`
-
-> `wit/deps/` is populated by `wkg wit fetch` and is gitignored. `wkg.lock` is committed to pin
-> the exact WASI interface versions used.
+Output: `target/wasm32-wasip2/release/audio_book_server.wasm`
 
 ## Run
 
 ```bash
 wasmtime serve \
-  -S cli \
+  --env MEDIA_BASE_URL=https://media.example.com \
+  --env PODCAST_TITLE="My Audio Book" \
+  --env PODCAST_LINK=https://example.com \
+  --env PODCAST_DESCRIPTION="Episode feed" \
+  --env RSS_SELF_URL=https://feed.example.com/files/A \
   --dir ./files::/files \
-  dates-api/target/wasm32-wasip2/release/audio-book-server.wasm
+  target/wasm32-wasip2/release/audio_book_server.wasm
 ```
 
 **`--dir ./files::/files`** maps the host's `./files/` to `/files` inside the WASM sandbox. The component **cannot** access any other path.
@@ -87,7 +77,7 @@ The crate now includes `build_media_url(base_url, directory, file_name)` in `src
 
 ## Configuration
 
-The binary reads required configuration values from environment variables, with optional CLI overrides:
+Required environment variables:
 
 - `MEDIA_BASE_URL`
 - `PODCAST_TITLE`
@@ -95,24 +85,7 @@ The binary reads required configuration values from environment variables, with 
 - `PODCAST_DESCRIPTION`
 - `RSS_SELF_URL`
 
-CLI overrides:
-
-```bash
-cargo run --target aarch64-apple-darwin -- \
-  --media-base-url https://media.example.com \
-  --podcast-title "My Audio Book" \
-  --podcast-link https://example.com \
-  --podcast-description "Episode feed" \
-  --rss-self-url https://feed.example.com/files/A
-```
-
-To print effective config values and exit:
-
-```bash
-cargo run --target aarch64-apple-darwin -- --print-config
-```
-
-If any required option is missing or empty, the process exits with an error message.
+If any required value is missing or empty, the server returns HTTP 500 with a configuration error.
 
 ```bash
 curl http://localhost:8080/files/A

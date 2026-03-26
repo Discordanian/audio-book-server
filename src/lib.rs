@@ -1,4 +1,11 @@
+use std::fs;
+use std::path::PathBuf;
+
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
+use wasi::exports::http::incoming_handler::Guest;
+use wasi::http::types::{
+    Fields, IncomingRequest, OutgoingBody, OutgoingResponse, ResponseOutparam,
+};
 
 const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'-')
@@ -11,6 +18,7 @@ pub const PODCAST_TITLE_ENV: &str = "PODCAST_TITLE";
 pub const PODCAST_LINK_ENV: &str = "PODCAST_LINK";
 pub const PODCAST_DESCRIPTION_ENV: &str = "PODCAST_DESCRIPTION";
 pub const RSS_SELF_URL_ENV: &str = "RSS_SELF_URL";
+pub const FILES_ROOT: &str = "/files";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum UrlBuildError {
@@ -118,6 +126,116 @@ pub fn load_config_from_env(cli: &CliOverrides) -> Result<AppConfig, ConfigError
     load_config_from_sources(cli, |name| std::env::var(name).ok())
 }
 
+fn xml_escape(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn is_audio_file(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    lower.ends_with(".mp3")
+        || lower.ends_with(".m4a")
+        || lower.ends_with(".aac")
+        || lower.ends_with(".ogg")
+        || lower.ends_with(".flac")
+}
+
+fn list_subdirectories() -> std::io::Result<Vec<String>> {
+    let mut dirs: Vec<String> = fs::read_dir(FILES_ROOT)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let ty = entry.file_type().ok()?;
+            if !ty.is_dir() {
+                return None;
+            }
+            Some(entry.file_name().to_string_lossy().to_string())
+        })
+        .collect();
+    dirs.sort();
+    Ok(dirs)
+}
+
+fn list_audio_files_for_dir(dir: &str) -> std::io::Result<Vec<String>> {
+    let path = PathBuf::from(FILES_ROOT).join(dir);
+    let mut files: Vec<String> = fs::read_dir(path)?
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let ty = entry.file_type().ok()?;
+            if !ty.is_file() {
+                return None;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            if is_audio_file(&name) {
+                Some(name)
+            } else {
+                None
+            }
+        })
+        .collect();
+    files.sort();
+    Ok(files)
+}
+
+fn build_feed_xml(config: &AppConfig, dir: &str, files: &[String]) -> String {
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.push_str("<rss version=\"2.0\">\n<channel>\n");
+    out.push_str(&format!(
+        "<title>{}</title>\n<link>{}</link>\n<description>{}</description>\n",
+        xml_escape(&config.podcast_title),
+        xml_escape(&config.podcast_link),
+        xml_escape(&config.podcast_description)
+    ));
+
+    for file in files {
+        if let Ok(url) = build_media_url(&config.media_base_url, dir, file) {
+            out.push_str("<item>\n");
+            out.push_str(&format!("<title>{}</title>\n", xml_escape(file)));
+            out.push_str(&format!("<guid>{}</guid>\n", xml_escape(&url)));
+            out.push_str(&format!(
+                "<enclosure url=\"{}\" type=\"audio/mpeg\" />\n",
+                xml_escape(&url)
+            ));
+            out.push_str("</item>\n");
+        }
+    }
+
+    out.push_str("</channel>\n</rss>\n");
+    out
+}
+
+fn html_index_page(dirs: &[String]) -> String {
+    let mut out = String::from(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>Audio Book Server</title></head><body><h1>Available feeds</h1><ul>",
+    );
+    for dir in dirs {
+        out.push_str(&format!(
+            "<li><a href=\"/files/{0}\">/files/{0}</a></li>",
+            xml_escape(dir)
+        ));
+    }
+    out.push_str("</ul></body></html>");
+    out
+}
+
+fn send_response(status: u16, content_type: &str, body: &[u8], response_out: ResponseOutparam) {
+    let headers = Fields::new();
+    headers
+        .append(&"content-type".to_string(), content_type.as_bytes())
+        .ok();
+    let response = OutgoingResponse::new(headers);
+    response.set_status_code(status).ok();
+    let response_body = response.body().expect("response body handle");
+    ResponseOutparam::set(response_out, Ok(response));
+    let stream = response_body.write().expect("response stream");
+    stream.blocking_write_and_flush(body).ok();
+    drop(stream);
+    OutgoingBody::finish(response_body, None).ok();
+}
+
 fn encode_path_segment(value: &str) -> String {
     utf8_percent_encode(value, PATH_SEGMENT_ENCODE_SET).to_string()
 }
@@ -160,6 +278,83 @@ pub fn sort_files_lexical(files: &[String]) -> Vec<String> {
     sorted.sort();
     sorted
 }
+
+struct Component;
+
+impl Guest for Component {
+    fn handle(request: IncomingRequest, response_out: ResponseOutparam) {
+        let cli = CliOverrides::default();
+        let config = match load_config_from_env(&cli) {
+            Ok(cfg) => cfg,
+            Err(err) => {
+                send_response(
+                    500,
+                    "text/plain; charset=utf-8",
+                    format!("Configuration error: {err}").as_bytes(),
+                    response_out,
+                );
+                return;
+            }
+        };
+
+        let path = request
+            .path_with_query()
+            .unwrap_or_else(|| "/".to_string())
+            .split('?')
+            .next()
+            .unwrap_or("/")
+            .to_string();
+
+        if path == "/" {
+            match list_subdirectories() {
+                Ok(dirs) => send_response(
+                    200,
+                    "text/html; charset=utf-8",
+                    html_index_page(&dirs).as_bytes(),
+                    response_out,
+                ),
+                Err(err) => send_response(
+                    500,
+                    "text/plain; charset=utf-8",
+                    format!("Failed to read /files: {err}").as_bytes(),
+                    response_out,
+                ),
+            }
+        } else if let Some(dir) = path.strip_prefix("/files/") {
+            if dir.is_empty() || dir.contains('/') {
+                send_response(
+                    400,
+                    "text/plain; charset=utf-8",
+                    b"Invalid directory path",
+                    response_out,
+                )
+            } else {
+                match list_audio_files_for_dir(dir) {
+                    Ok(files) => {
+                        let sorted = sort_files_lexical(&files);
+                        let rss = build_feed_xml(&config, dir, &sorted);
+                        send_response(
+                            200,
+                            "application/rss+xml; charset=utf-8",
+                            rss.as_bytes(),
+                            response_out,
+                        )
+                    }
+                    Err(err) => send_response(
+                        404,
+                        "text/plain; charset=utf-8",
+                        format!("Directory not found: {err}").as_bytes(),
+                        response_out,
+                    ),
+                }
+            }
+        } else {
+            send_response(404, "text/plain; charset=utf-8", b"Not found", response_out)
+        }
+    }
+}
+
+wasi::http::proxy::export!(Component);
 
 #[cfg(test)]
 mod tests {
