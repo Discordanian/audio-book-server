@@ -37,6 +37,7 @@ Output: `target/wasm32-wasip2/release/audio_book_server.wasm`
 
 ```bash
 wasmtime serve \
+  -S cli \
   --env MEDIA_BASE_URL=https://media.example.com \
   --env PODCAST_TITLE="My Audio Book" \
   --env PODCAST_LINK=https://example.com \
@@ -47,6 +48,8 @@ wasmtime serve \
 ```
 
 **`--dir ./files::/files`** maps the host's `./files/` to `/files` inside the WASM sandbox. The component **cannot** access any other path.
+
+`-S cli` is required so the component can read environment variables.
 
 By default `wasmtime serve` listens on `0.0.0.0:8080`. To change the address:
 
