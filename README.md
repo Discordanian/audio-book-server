@@ -1,6 +1,7 @@
 # Audio Book Server
 Audio Book Server
 
+
 Runs with [wasmtime](https://wasmtime.dev/) using `wasmtime serve`. The `--dir` flag sandboxes the component so it can **only** read from the `files/` directory — nothing else on the filesystem is accessible.
 
 Because the output is a `.wasm` file, it is architecture-independent. Build once on any platform (macOS, Linux, etc.) and run the same binary everywhere wasmtime is installed.
